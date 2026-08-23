@@ -1,0 +1,106 @@
+# Coach Chad Chess Borg — scheduled RL iteration
+# Self-play → train → checkpoint → Coach vs Borg eval → rating log
+#
+# WARNING: Free GitHub-hosted runners are CPU-only + minute-capped.
+# For meaningful growth use a self-hosted GPU runner or external compute.
+# This workflow is intentionally small by default so it can complete.
+
+name: Coach Chad RL Iteration
+
+on:
+  schedule:
+    # Every 6 hours (hourly is too aggressive for free runners)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'Number of RL iterations'
+        required: false
+        default: '1'
+      games:
+        description: 'Self-play games per iteration'
+        required: false
+        default: '4'
+      simulations:
+        description: 'MCTS simulations per move'
+        required: false
+        default: '40'
+      eval_games:
+        description: 'Coach vs Borg match games'
+        required: false
+        default: '10'
+
+jobs:
+  train-and-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Cache checkpoints
+        uses: actions/cache@v4
+        with:
+          path: checkpoints
+          key: checkpoints-${{ github.run_id }}
+          restore-keys: |
+            checkpoints-
+
+      - name: Run RL loop (Coach Chad training)
+        run: |
+          ITERS="${{ github.event.inputs.iterations || '1' }}"
+          GAMES="${{ github.event.inputs.games || '4' }}"
+          SIMS="${{ github.event.inputs.simulations || '40' }}"
+          RESUME=""
+          if [ -f checkpoints/latest.pt ]; then
+            RESUME="--resume checkpoints/latest.pt"
+          fi
+          poetry run chesszero loop \
+            --iterations "$ITERS" \
+            --games "$GAMES" \
+            --simulations "$SIMS" \
+            $RESUME \
+            --sample-games 2 \
+            --games-dir games
+
+      - name: Coach vs Borg evaluation
+        run: |
+          EVAL_GAMES="${{ github.event.inputs.eval_games || '10' }}"
+          # Find previous checkpoint if exists
+          LATEST="checkpoints/latest.pt"
+          PREV=$(ls -1 checkpoints/model_iter_*.pt 2>/dev/null | sort -V | tail -n 2 | head -n 1 || true)
+          if [ -n "$PREV" ] && [ -f "$LATEST" ] && [ "$PREV" != "$LATEST" ]; then
+            echo "Coach Chad (latest) vs Borg Chad ($PREV)"
+            poetry run chesszero eval "$LATEST" --model-b "$PREV" --games "$EVAL_GAMES" | tee ratings/last_match.txt
+          else
+            echo "No previous Borg checkpoint yet — evaluating vs random"
+            poetry run chesszero eval "$LATEST" --games "$EVAL_GAMES" | tee ratings/last_match.txt
+          fi
+
+      - name: Update rating history
+        run: |
+          python scripts/track_ratings.py || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coach-chad-checkpoints-${{ github.run_number }}
+          path: |
+            checkpoints/
+            games/
+            ratings/
+          retention-days: 30
