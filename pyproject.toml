@@ -1,28 +1,25 @@
 [project]
-name = "chesszero"
-version = "0.2.0"
-description = "Coach Chad's Chess Borg — AlphaZero-style RL agent that learns chess from self-play. Hourly Coach vs Borg iterations toward steady rating growth."
-authors = [
-    { name = "Coach Chad / The Chess Zone", email = "coach@coffeefordessert.com" },
-    { name = "Alberto (original ChessZero)", email = "alberto.rfernandez4@gmail.com" },
-]
+name = "chadborg"
+version = "0.4.0"
+description = "Coach Chad Borg: Fly-style 1-ply legal-move ranker (lite /think) and macos alpha-beta search. Legal moves only, CPU only."
 readme = "README.md"
-requires-python = ">=3.11,<3.15"
-dependencies = [
-    "torch (>=2.0)",
-    "python-chess (>=1.11)",
-    "numpy (>=1.24)",
-]
+requires-python = ">=3.11"
+authors = [{ name = "Coach Chad / The Chess Zone", email = "coach@coffeefordessert.com" }]
+# python-chess is published on PyPI as "chess" (the "python-chess" name is a 1.999 shim)
+dependencies = ["chess>=1.11"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
 
 [project.scripts]
-chesszero = "chesszero.cli:main"
-
-[tool.poetry]
-packages = [{ include = "chesszero", from = "src" }]
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.0"
+chadborg = "chadborg.cli:main"
 
 [build-system]
-requires = ["poetry-core>=2.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

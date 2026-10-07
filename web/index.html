@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coach Chad Borg — play the 1-ply bug</title>
+<style>
+  :root { --bg:#08080a; --panel:#111115; --line:#25252d; --ink:#e9e9ee; --dim:#8b8b98; --accent:#ff7a18; --good:#3dd68c; --bad:#ff5d5d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-system,BlinkMacSystemFont,Inter,system-ui,sans-serif; }
+  header { padding:16px 22px; border-bottom:1px solid var(--line); display:flex; gap:12px; flex-wrap:wrap; align-items:baseline; }
+  h1 { font-size:16px; margin:0; } h1 b { color:var(--accent); }
+  .sub { color:var(--dim); font-size:12.5px; }
+  .wrap { display:grid; grid-template-columns: 1fr 1fr; gap:18px; padding:18px 22px; max-width:1200px; }
+  @media(max-width:900px){ .wrap { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+  .panel h2 { font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); margin:0; padding:11px 14px; border-bottom:1px solid var(--line); }
+  .board { display:grid; grid-template-columns:repeat(8,1fr); width:min(92vw,420px); margin:16px auto; border:8px solid #3a2a1a; }
+  .sq { aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size:28px; cursor:pointer; user-select:none; }
+  .light { background:#f0d9b5; } .dark { background:#b58863; }
+  .sel { outline:3px solid var(--accent); outline-offset:-3px; }
+  .hint { background:#f6f66988; }
+  pre { margin:0; padding:14px; font:12px/1.45 ui-monospace,Menlo,monospace; color:#cfd3dc; white-space:pre-wrap; }
+  .note { padding:14px; color:var(--dim); font-size:13px; }
+  button { background:#1b1b22; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px 12px; cursor:pointer; }
+  .bar { display:flex; gap:8px; padding:12px 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Coach Chad vs <b>Borg</b></h1>
+  <span class="sub">lite = 1-ply + always 1...g5 reply · macos = KG + 80/10/10 reply + deeper search</span>
+</header>
+<div class="wrap">
+  <div class="panel">
+    <h2>Board (client demo — static piece unicode, server engine via CLI)</h2>
+    <div class="bar">
+      <button type="button" onclick="reset()">Reset</button>
+      <span class="sub" id="status">White to move. This page is the design replica. Run <code>python -m chadborg.cli play</code> for the live engine.</span>
+    </div>
+    <div class="board" id="board"></div>
+    <p class="note">The working Fly Chess app injects every resulting position into 8,865 sensory cells and ranks 2,129 motor cells. Borg copies that <em>loop</em> with a portable feature ranker so it runs on Linux, a VPS, or GitHub Actions without macOS Homebrew or a GPU.</p>
+  </div>
+  <div class="panel">
+    <h2>Why the last Borg died</h2>
+    <pre>Old pipeline
+  AlphaZero ResNet + 100-sim MCTS
+  Poetry + PyTorch + checkpoints/*.pt
+  Free GHA CPU runners (timeout)
+  Split repos: orchestration without src/
+  macOS /opt/homebrew python3.12 lock-in
+
+Fly Chess (functional, ~700 claimed)
+  164,587 neurons · 25.6M synapses  (MaleCNS)
+  For each legal move: simulate resulting board
+  Rank motor readout · pick max
+  Assists: take mate, do not walk into mate
+  Hosted: Vercel front + Railway API
+  Measured: best_pick 0.41 vs random 0.09 (n=844)
+
+New Borg
+  Same 1-ply legal-move rank + two assists
+  python-chess only
+  chadborg think | play | eval | selfplay
+  Score vs random legal, not fake Elo from 4 games</pre>
+  </div>
+</div>
+<script>
+const start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+const glyph = {K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
+function render(fen){
+  const grid = document.getElementById("board");
+  grid.innerHTML = "";
+  const rows = fen.split("/");
+  rows.forEach((row,r)=>{
+    let f=0;
+    for (const ch of row){
+      if (/\d/.test(ch)){ for(let i=0;i<+ch;i++){ cell(r,f++,""); } }
+      else { cell(r,f++,glyph[ch]||""); }
+    }
+  });
+}
+function cell(r,f,g){
+  const d=document.createElement("div");
+  d.className="sq "+((r+f)%2?"dark":"light");
+  d.textContent=g;
+  document.getElementById("board").appendChild(d);
+}
+function reset(){ render(start); }
+reset();
+</script>
+</body>
+</html>
