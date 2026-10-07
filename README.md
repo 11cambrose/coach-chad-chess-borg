@@ -1,138 +1,71 @@
 # Coach Chad's Chess Borg 🤖♟️
 
-> **[TCZ]** Coach Chad vs Borg Chad — the unstoppable RL grind begins. Break their EGO. Steady growth. Rating thresholds. No illegal moves. Pure self-play. mmmbullseye COACH!!!
+> **[TCZ]** Coach Chad vs Borg Chad. Legal moves only. CPU only. No illegal moves, ever.
 
-An AlphaZero-style reinforcement-learning chess agent, forked and rebranded for **The Chess Zone** (Coach Chad). The model learns purely from **self-play**, guided by **Monte Carlo Tree Search (MCTS)**, and is structurally incapable of selecting an **illegal move**.
+`chadborg` is a Fly-style chess engine (see [REDESIGN.md](REDESIGN.md)):
 
-**Ultimate goal:** Grow the Coach Chad bot engine so it achieves **consistent rating thresholds** with a **steady growth trajectory**. Hourly (or scheduled) iterations of Coach Chad vs Borg Chad produce stronger checkpoints over time.
+1. enumerate **legal moves only** (python-chess),
+2. play each one out and score the resulting board (1-ply feature ranker),
+3. pick the best,
+4. two hard assists: **take a mate in 1** when one exists, and **never walk into mate in 1**.
 
-## Architecture (unchanged core)
+Two personalities:
 
-```
-board (python-chess)
-   │  encode_board  ─────────────▶ (19, 8, 8) tensor
-   │
-   ▼
-ChessNet (ResNet tower)  ──▶  policy logits (4672)  +  value (tanh, [-1,1])
-   │
-   ▼
-Evaluator: mask illegal moves, softmax over legal moves only
-   │
-   ▼
-MCTS (PUCT selection, value back-ups)  ──▶  visit-count policy π  +  search value
-   │
-   ├─ self-play: sample move from π (temperature), store (state, π, result)
-   ▼
-Training: minimize  MSE(value, result) + cross-entropy(policy, π)
-```
-
-| Module | Responsibility |
+| profile | what it does |
 | --- | --- |
-| `encoding.py`  | board ↔ tensor, move ↔ index (4672 action space), **legal mask** |
-| `network.py`   | residual policy + value network |
-| `mcts.py`      | evaluator (legal masking) and PUCT Monte Carlo Tree Search |
-| `selfplay.py`  | generate self-play games → training examples |
-| `replay_buffer.py` | fixed-size example buffer |
-| `train.py`     | one training pass (policy + value loss) |
-| `agent.py`     | move-selection agent for play / evaluation |
-| `cli.py`       | `loop`, `play`, `eval` commands |
+| `lite` | 1-ply ranker. As Black, its first reply is **always 1...g5** when legal. Cheap enough for a `POST /think` box. |
+| `macos` | alpha-beta + capture/check quiescence (default depth 3). As White it steers the King's Gambit (1.e4 95%, 2.f4 95%). As Black its first reply is 80% 1...g5, 10% 1...c5, 10% random legal. |
 
-## Coach Chad vs Borg Chad
+Black never moves first; the book fires only on Black's first reply.
 
-- **Coach Chad** = the current improving network (`checkpoints/latest.pt` or newest `model_iter_N.pt`)
-- **Borg Chad** = a previous checkpoint (or random baseline early on)
-
-Use the `eval` command to pit them against each other and track win rates → approximate Elo growth.
+## Install (uv or pip, no Poetry, no torch)
 
 ```bash
-# Evaluate Coach (model_a) vs Borg (model_b)
-poetry run chesszero eval checkpoints/latest.pt --model-b checkpoints/model_iter_5.pt --games 20
-
-# Or vs random (early baseline)
-poetry run chesszero eval checkpoints/latest.pt --games 20
+uv venv --python 3.12 && . .venv/bin/activate
+uv pip install -e ".[dev]"          # or: python -m pip install -e ".[dev]"
+pytest -q
 ```
 
-Rating tracking lives in `ratings/` (JSON log of match results + estimated Elo). See `scripts/track_ratings.py`.
-
-## Training process (the RL loop)
-
-Each *iteration*:
-
-1. **Self-play (network frozen)**: generate games, store (state, π, z)
-2. **Train**: update policy + value heads
-3. **Checkpoint**: save `model_iter_N.pt` + `latest.pt`
-4. **Optional match**: Coach vs Borg, log rating delta
+## Use
 
 ```bash
-# Small sanity run (CPU-friendly)
-poetry run chesszero loop --iterations 2 --games 4 --simulations 40
-
-# Resume + sample games for the viewer
-poetry run chesszero loop --resume checkpoints/latest.pt --iterations 5 --games 10 --sample-games 5
+chadborg think                                  # lite from the start position
+chadborg think --profile macos --depth 2 --fen "<FEN>"
+chadborg play --color white --profile lite      # human vs Borg in the terminal
+chadborg serve --host 127.0.0.1 --port 8787     # POST /think {"fen","profile","depth"}
+chadborg rl --profile macos --games 2 --depth 2 # self-play labels -> ratings/rl_buffer.jsonl
 ```
 
-## Hourly / scheduled pipeline
+`POST /think` validates input: body must be a JSON object, `profile` in `lite|macos|default`,
+`depth` an integer 1–3. Bad input gets a 400 JSON error.
 
-GitHub Actions workflow (`.github/workflows/rl-iteration.yml`) can be enabled for scheduled self-play + train + eval cycles.
-
-**Note on compute:** Free GitHub-hosted runners are CPU-only and minute-limited. For real growth trajectory you need a self-hosted runner, GPU machine, or cloud (Colab, Lambda, etc.). The workflow is structured so you can point it at a larger runner or trigger manually via `workflow_dispatch`.
-
-Alternatively, use the Grok Automations connector to schedule prompts that:
-
-- Trigger a workflow_dispatch
-- Analyze latest rating logs
-- Report progress toward thresholds (e.g. 800 → 1200 → 1600 → 2000)
-
-## Setup
-
-Requires Python 3.11–3.14 and [Poetry](https://python-poetry.org/).
+## QA
 
 ```bash
-poetry install
+python qa/chadborg_qa.py --quick                          # CI gate, ~1–2 min
+python qa/chadborg_qa.py --full --stockfish /path/to/sf   # adds macos d2, all openings, games vs Stockfish
+python qa/borg_qa.py --candidate chadborg:lite --version X --opponent uci:/path/to/sf:1 --expect-black-first g7g5
 ```
 
-## Usage summary
+Metrics: 1...g5 rate, illegal moves (hard fail), mate-assist suite (take / avoid), Fly
+**best_pick** and **regret vs random** on 249 held-out positions from Coach Chad house games
+scored by Stockfish 19, and games vs random / Stockfish at fixed depth. See [qa/README.md](qa/README.md).
 
-```bash
-# Full RL loop
-poetry run chesszero loop --iterations 10 --games 20 --simulations 100
+## Workflows
 
-# Play human vs Coach Chad
-poetry run chesszero play checkpoints/latest.pt --color white
+- `PR QA` (`.github/workflows/pr-qa.yml`): pytest on 3.11/3.12 + quick QA on every pull request.
+- `Coach Chad RL Iteration` (`.github/workflows/rl-iteration.yml`): install, pytest, short macos
+  self-play, QA metrics appended to `ratings/history.json` (uploaded as an artifact).
+  **Disabled on GitHub (paused 2026-10-06).** Re-enable from the Actions tab only when wanted.
 
-# Coach vs Borg evaluation
-poetry run chesszero eval checkpoints/latest.pt --model-b checkpoints/model_iter_3.pt --games 30
+## Layout
 
-# Viewer for sampled self-play games
-poetry run chesszero viewer
+```
+src/chadborg/   eval, engine, openings, search, server, rl, cli
+tests/          pytest
+qa/             chadborg_qa.py, borg_qa.py, held-out + mate-suite data and builders
+web/            layout sketch for a /think front end
+ratings/        history.json (QA metrics), rl_buffer.jsonl (self-play labels)
 ```
 
-## Rating growth targets (Coach Chad style)
-
-| Threshold | Meaning |
-|-----------|---------|
-| 800       | Beats random consistently |
-| 1200      | Solid club beginner |
-| 1600      | Intermediate, starts finding tactics |
-| 2000      | Strong amateur / candidate master trajectory |
-| 2200+     | Borg-level pressure cooking |
-
-Track steady upward slope in `ratings/history.json`. No plateaus allowed. Break the EGO of the previous version every iteration.
-
-## Tests
-
-```bash
-poetry run pytest
-```
-
-## Origin
-
-Forked from [albrodfer1/chess](https://github.com/albrodfer1/chess) (ChessZero / AlphaZero-style). Rebranded and extended for Coach Chad's Chess Borg at The Chess Zone.
-
-**Disclaimer:** Core code & original docs are AI-generated. The Borg grind is real.
-
----
-
-*Schedule a consultation with Coach Chad today & learn how The Chess Zone can unlock a new routine of daily mental fitness!! Log on Anon and grind for interesting tactics!*
-
-Chef’s kiss – xoxo – COACH Chad!!!
+The old AlphaZero/Poetry/torch path (`chesszero`, `11cambrose/chess`) is retired as the default.

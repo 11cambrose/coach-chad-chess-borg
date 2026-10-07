@@ -1,106 +1,92 @@
-# Coach Chad Chess Borg — scheduled RL iteration
-# Self-play → train → checkpoint → Coach vs Borg eval → rating log
+# Coach Chad Borg: scheduled RL iteration on the CPU stack (chadborg, python-chess, no torch).
+#   install -> pytest -> short macos self-play (rl labels) -> QA metrics -> ratings/history.json
 #
-# WARNING: Free GitHub-hosted runners are CPU-only + minute-capped.
-# For meaningful growth use a self-hosted GPU runner or external compute.
-# This workflow is intentionally small by default so it can complete.
+# This workflow is DISABLED on GitHub (paused by Chad on 2026-10-06). Editing this file does
+# not re-enable it. Re-enable from the Actions tab only when you want the schedule back.
+# Results are uploaded as an artifact; nothing is committed back to the repo.
 
 name: Coach Chad RL Iteration
 
 on:
   schedule:
-    # Every 6 hours (hourly is too aggressive for free runners)
     - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
-      iterations:
-        description: 'Number of RL iterations'
-        required: false
-        default: '1'
       games:
-        description: 'Self-play games per iteration'
+        description: 'Self-play games (macos profile)'
         required: false
-        default: '4'
-      simulations:
-        description: 'MCTS simulations per move'
+        default: '2'
+      depth:
+        description: 'macos search depth for self-play (1-3; 3 is ~10 s/move)'
         required: false
-        default: '40'
-      eval_games:
-        description: 'Coach vs Borg match games'
+        default: '2'
+      qa_mode:
+        description: 'QA mode: quick or full'
         required: false
-        default: '10'
+        default: 'quick'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rl-iteration
+  cancel-in-progress: false
+
+env:
+  SF_URL: https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz
+  SF_SHA256: 9defc0d4e55d49c65a6d042f3e571a39fcea499ade6dbe741b53b8c65e03611f
 
 jobs:
-  train-and-eval:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-
+  rl-and-qa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      - name: Install Poetry
+      - name: Install (uv venv, editable + dev)
         run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          python -m pip install --disable-pip-version-check "uv==0.12.22"
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e ".[dev]"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Install dependencies
-        run: poetry install --no-interaction
+      - name: Tests
+        run: pytest -q
 
-      - name: Cache checkpoints
-        uses: actions/cache@v4
-        with:
-          path: checkpoints
-          key: checkpoints-${{ github.run_id }}
-          restore-keys: |
-            checkpoints-
-
-      - name: Run RL loop (Coach Chad training)
+      - name: Short RL run (macos self-play -> ratings/rl_buffer.jsonl)
+        env:
+          GAMES: ${{ github.event.inputs.games || '2' }}
+          DEPTH: ${{ github.event.inputs.depth || '2' }}
         run: |
-          ITERS="${{ github.event.inputs.iterations || '1' }}"
-          GAMES="${{ github.event.inputs.games || '4' }}"
-          SIMS="${{ github.event.inputs.simulations || '40' }}"
-          RESUME=""
-          if [ -f checkpoints/latest.pt ]; then
-            RESUME="--resume checkpoints/latest.pt"
-          fi
-          poetry run chesszero loop \
-            --iterations "$ITERS" \
-            --games "$GAMES" \
-            --simulations "$SIMS" \
-            $RESUME \
-            --sample-games 2 \
-            --games-dir games
+          chadborg rl --profile macos --games "$GAMES" --depth "$DEPTH" \
+            --seed "${GITHUB_RUN_NUMBER}" --out ratings/rl_buffer.jsonl
 
-      - name: Coach vs Borg evaluation
+      - name: Fetch Stockfish 19 (official release, checksum pinned)
         run: |
-          EVAL_GAMES="${{ github.event.inputs.eval_games || '10' }}"
-          # Find previous checkpoint if exists
-          LATEST="checkpoints/latest.pt"
-          PREV=$(ls -1 checkpoints/model_iter_*.pt 2>/dev/null | sort -V | tail -n 2 | head -n 1 || true)
-          if [ -n "$PREV" ] && [ -f "$LATEST" ] && [ "$PREV" != "$LATEST" ]; then
-            echo "Coach Chad (latest) vs Borg Chad ($PREV)"
-            poetry run chesszero eval "$LATEST" --model-b "$PREV" --games "$EVAL_GAMES" | tee ratings/last_match.txt
-          else
-            echo "No previous Borg checkpoint yet — evaluating vs random"
-            poetry run chesszero eval "$LATEST" --games "$EVAL_GAMES" | tee ratings/last_match.txt
-          fi
+          curl -fsSL -o sf.tgz "$SF_URL"
+          echo "$SF_SHA256  sf.tgz" | sha256sum -c -
+          tar xzf sf.tgz
+          echo "STOCKFISH=$PWD/stockfish/stockfish-linux-x86-64-universal" >> "$GITHUB_ENV"
 
-      - name: Update rating history
+      - name: QA metrics -> ratings/history.json
+        env:
+          QA_MODE: ${{ github.event.inputs.qa_mode || 'quick' }}
         run: |
-          python scripts/track_ratings.py || true
+          python qa/chadborg_qa.py "--${QA_MODE}" --stockfish "$STOCKFISH" \
+            --out-dir qa-results --history ratings/history.json
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@v6
         with:
-          name: coach-chad-checkpoints-${{ github.run_number }}
+          name: chadborg-rl-${{ github.run_number }}
           path: |
-            checkpoints/
-            games/
             ratings/
+            qa-results/
           retention-days: 30

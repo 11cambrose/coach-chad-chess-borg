@@ -1,24 +1,15 @@
-# Full source setup
+# Setup
 
-The orchestration layer (README, workflow, ratings tracker) lives in this repo.
-
-The complete ChessZero source (src/, tests/, docs/, etc.) is in the companion fork:
-
-https://github.com/11cambrose/chess
-
-## Quick local setup
+Everything needed is in this repo now (the old `11cambrose/chess` fork is no longer required).
 
 ```bash
-git clone https://github.com/11cambrose/chess.git coach-chad-src
-cd coach-chad-src
-# optionally overlay the borg workflow & scripts
-cp -r ../coach-chad-chess-borg/.github .
-cp -r ../coach-chad-chess-borg/scripts .
-cp -r ../coach-chad-chess-borg/ratings .
-# or just work from the chess fork and copy the workflow there
-
-poetry install
-poetry run chesszero loop --iterations 1 --games 2 --simulations 20
+git clone https://github.com/11cambrose/coach-chad-chess-borg.git
+cd coach-chad-chess-borg
+uv venv --python 3.12 && . .venv/bin/activate
+uv pip install -e ".[dev]"
+pytest -q
+chadborg think
 ```
 
-For the scheduled pipeline, enable Actions on this repo and/or the fork, and attach a self-hosted GPU runner for real strength growth.
+Linux, macOS or Windows; Python 3.11+; no GPU, no Poetry, no torch.
+For QA against Stockfish, download Stockfish 19 from the official release and pass `--stockfish PATH`.
